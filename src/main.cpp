@@ -1,13 +1,26 @@
 #include "Arduino.h"
 #include "Wire.h"
+#include "Adafruit_BMP280.h"
+#include "Adafruit_LTR390.h"
+#include "RPi_Pico_TimerInterrupt.h"
 
-const char I2C_ADDR = 0x55; //Set to desired i2c-adress
+Adafruit_BMP280 bmp; // I2C
+Adafruit_LTR390 ltr = Adafruit_LTR390();
+RPI_PICO_Timer ITimer(1);
+
+const char I2C_ADDR = 0x71; //Set to desired i2c-adress
 #undef DEBUG    //Define for various debug outputs (#undef to disable) - !!!ENABLING SLOWS DOWN CODE SIGNIFICANTLY!!!
 
-#define Sensor1 0x12
-#define Sensor2 0x13
-#define Sensor3 0x14
+#define Pressure 0x01
+#define Temperature 0x02
+#define Brightness 0x03
+#define UVBrightness 0x04
 
+char module = 0x00;  //Variable to store the module that is being called
+
+float BrightnessValue = 0;
+float UVBrightnessValue = 0;
+bool switchState = 0;
 
 #define BUILTIN_LED 25 //GPIO of BUILTIN_LED for pico
 #ifdef esp32dev
@@ -30,7 +43,7 @@ void sendData(float data1 = 0, float data2 = 0){  //Function to send data back t
 
   //Iterate throught the adresses of the pointer, to read the bytes of the float, and send them via i2c
   for (uint8_t i = 0; i < sizeof(float); ++i) {
-      Wire.write((*bytePointer1));
+      Wire1.write((*bytePointer1));
       bytePointer1++;
   }
 
@@ -39,7 +52,7 @@ void sendData(float data1 = 0, float data2 = 0){  //Function to send data back t
 
   //Iterate throught the adresses of the pointer, to read the bytes of the float, and send them via i2c
   for (uint8_t i = 0; i < sizeof(float); ++i) {
-      Wire.write((*bytePointer2));
+      Wire1.write((*bytePointer2));
       bytePointer2++;
   }
 }
@@ -68,34 +81,45 @@ void blink(){
 void onRequest(){ //Code to execute when master requests data from the slave
   #ifdef DEBUG
   Serial.println("OnRequest");
-  Serial.println(Wire.peek());
+  Serial.println(Wire1.peek());
   blink();
   #endif
-  char module = Wire.read();  //Read from which sensor/module the master wants data
+  //Data is already saved in the module variable
   switch(module){
-    case Sensor1:
+    case Pressure:
       #ifdef DEBUG
         Serial.println("Module 1 called");
       #endif
       //Code to execute when Module1 is being called
+      sendData(bmp.readPressure());
       break;
-    case Sensor2:
+    case Temperature:
       #ifdef DEBUG
         Serial.println("Module 2 called");
       #endif
       //Code to execute when Module2 is being called
+      sendData(bmp.readTemperature());
       break;
-    case Sensor3:
+    case Brightness:
       #ifdef DEBUG
         Serial.println("Module 3 called");
       #endif
       //Code to execute when Module3 is being called
+      sendData(BrightnessValue);
+      break;
+    case UVBrightness:
+      #ifdef DEBUG
+        Serial.println("Module 4 called");
+      #endif
+      //Code to execute when Module4 is being called
+      sendData(UVBrightnessValue);
       break;
     default:
       //Code to execute when unkown module is being called
       #ifdef DEBUG
         Serial.println("Unknown module called");
       #endif
+      Wire1.write(0);  //Send 0 back to the master
       break;
   }
 }
@@ -106,22 +130,25 @@ void onReceive(int len){
   blink();
   #endif
   //Code to execute when master sends data to the slave
-  char module = Wire.read();  //Read from which sensor/module the master wants to change
-  char data = Wire.read();  //Read the data the master wants to send
+  module = Wire1.read();  //Read from which sensor/module the master wants to change
+  if (!Wire1.available()){  //Check if there is no more data to read, which means that the master wants to read data from the slave
+    return;
+  }
+  char data = Wire1.read();  //Read the data the master wants to send
   switch(module){
-    case Sensor1:
+    case Pressure:
       #ifdef DEBUG
         Serial.println("Module 1 called");
       #endif
       //Code to execute when Module1 is being called
       break;
-    case Sensor2:
+    case Temperature:
       #ifdef DEBUG
         Serial.println("Module 2 called");
       #endif
       //Code to execute when Module2 is being called
       break;
-    case Sensor3:
+    case Brightness:
       #ifdef DEBUG
         Serial.println("Module 3 called");
       #endif
@@ -136,20 +163,54 @@ void onReceive(int len){
   }
 }
 
+void readBrightness(){
+  if(switchState){
+    BrightnessValue = (ltr.readALS()*0.6)/(3*4);
+    ltr.setMode(LTR390_MODE_UVS);
+  }
+  else{
+    UVBrightnessValue = ltr.readUVS();
+    ltr.setMode(LTR390_MODE_ALS);
+  }
+  switchState = !switchState;
+  return;
+}
+
+void test(){
+  return;
+}
+
 void setup() {
   // put your setup code here, to run once:
   #ifdef DEBUG
   pinMode(BUILTIN_LED, OUTPUT);
   #endif
-  Serial.begin(115200);
 
-  Wire.onReceive(onReceive);  //Function to be called when a master sends data to the slave
-  Wire.onRequest(onRequest);  //Function to be called when a master requests data from the slave
-  Wire.begin((uint8_t)I2C_ADDR);  //Register this device as a slave on the i2c-bus (on bus 0)
+  bmp.begin(BMP280_ADDRESS_ALT, BMP280_CHIPID);  //Initialize the BMP280 sensor
+
+  bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
+                  Adafruit_BMP280::SAMPLING_X2,     /* Temp. oversampling */
+                  Adafruit_BMP280::SAMPLING_X16,    /* Pressure oversampling */
+                  Adafruit_BMP280::FILTER_X16,      /* Filtering. */
+                  Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
+
+  ltr.begin();  //Initialize the LTR390 sensor
+  ltr.setGain(LTR390_GAIN_3);  //Set the gain of the sensor
+  ltr.setResolution(LTR390_RESOLUTION_20BIT);  //Set the resolution of the sensor
+
+  ITimer.setInterval(500*1000, (pico_timer_callback)readBrightness);  //Set the interval of the timer to 500ms
+
+  Serial.begin(115200);
+  Wire1.setSDA(10);
+  Wire1.setSCL(11);
+  Wire1.onReceive(onReceive);  //Function to be called when a master sends data to the slave
+  Wire1.onRequest(onRequest);  //Function to be called when a master requests data from the slave
+  Wire1.begin((uint8_t)I2C_ADDR);  //Register this device as a slave on the i2c-bus (on bus 0)
 
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
+
 
 }
