@@ -1,10 +1,10 @@
 #include "Arduino.h"
 #include "Wire.h"
-#include "Adafruit_BMP280.h"
+#include "Adafruit_BME280.h"
 #include "Adafruit_LTR390.h"
 #include "RPi_Pico_TimerInterrupt.h"
 
-Adafruit_BMP280 bmp; // I2C
+Adafruit_BME280 bme; // I2C
 Adafruit_LTR390 ltr = Adafruit_LTR390();
 RPI_PICO_Timer ITimer(1);
 
@@ -15,6 +15,7 @@ const char I2C_ADDR = 0x71; //Set to desired i2c-adress
 #define Temperature 0x02
 #define Brightness 0x03
 #define UVBrightness 0x04
+#define Humidity 0x05
 
 char module = 0x00;  //Variable to store the module that is being called
 
@@ -91,14 +92,21 @@ void onRequest(){ //Code to execute when master requests data from the slave
         Serial.println("Module 1 called");
       #endif
       //Code to execute when Module1 is being called
-      sendData(bmp.readPressure());
+      sendData(bme.readPressure());
       break;
     case Temperature:
       #ifdef DEBUG
         Serial.println("Module 2 called");
       #endif
       //Code to execute when Module2 is being called
-      sendData(bmp.readTemperature());
+      sendData(bme.readTemperature());
+      break;
+    case Humidity:
+      #ifdef DEBUG
+        Serial.println("Module 3 called");
+      #endif
+      //Code to execute when Module3 is being called
+      sendData(bme.readHumidity());
       break;
     case Brightness:
       #ifdef DEBUG
@@ -186,13 +194,14 @@ void setup() {
   pinMode(BUILTIN_LED, OUTPUT);
   #endif
 
-  bmp.begin(BMP280_ADDRESS_ALT, BMP280_CHIPID);  //Initialize the BMP280 sensor
+  bme.begin(0x76);  //Initialize the BMP280 sensor
 
-  bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
-                  Adafruit_BMP280::SAMPLING_X2,     /* Temp. oversampling */
-                  Adafruit_BMP280::SAMPLING_X16,    /* Pressure oversampling */
-                  Adafruit_BMP280::FILTER_X16,      /* Filtering. */
-                  Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
+  bme.setSampling(Adafruit_BME280::MODE_NORMAL,
+                    Adafruit_BME280::SAMPLING_X16,  // temperature
+                    Adafruit_BME280::SAMPLING_X16, // pressure
+                    Adafruit_BME280::SAMPLING_X16,  // humidity
+                    Adafruit_BME280::FILTER_X16,
+                    Adafruit_BME280::STANDBY_MS_0_5 );
 
   ltr.begin();  //Initialize the LTR390 sensor
   ltr.setGain(LTR390_GAIN_3);  //Set the gain of the sensor
